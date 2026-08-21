@@ -108,9 +108,28 @@ func roundTripCases() map[string]*richdoc.Document {
 		"image-bare-path": richdoc.New().
 			P(richdoc.Img("Pictures/unresolved.png", "", "")).
 			Doc(),
+		"footnote": richdoc.New().
+			P(
+				richdoc.Txt("text"),
+				richdoc.Note(
+					richdoc.Paragraph{Inlines: []richdoc.Inline{richdoc.Txt("first note para")}},
+					richdoc.Paragraph{Inlines: []richdoc.Inline{richdoc.Bold(richdoc.Txt("second"))}},
+				),
+			).Doc(),
+		"bookmark": richdoc.New().
+			P(richdoc.Txt("at "), richdoc.Mark("anchor1"), richdoc.Txt(" here")).
+			Doc(),
+		"crossref-label": richdoc.New().
+			P(richdoc.Txt("see "), richdoc.Ref("anchor1", richdoc.Txt("Fig. 1"))).
+			Doc(),
+		"crossref-cite": richdoc.New().
+			P(richdoc.Txt("as in "), richdoc.Cite("knuth1997", richdoc.Txt("[1]"))).
+			Doc(),
 		"raw": richdoc.New().
-			Add(richdoc.RawBlock{Format: "odf", Text: `<text:note text:id="ftn1" text:note-class="footnote"><text:note-citation>1</text:note-citation><text:note-body><text:p>A footnote.</text:p></text:note-body></text:note>`}).
-			P(richdoc.Txt("see "), richdoc.RawInline{Format: "odf", Text: `<text:bookmark text:name="mark"></text:bookmark>`}, richdoc.Txt(" here")).
+			// A table-of-content block and a reference-mark inline have no model
+			// node and still round-trip verbatim through Raw.
+			Add(richdoc.RawBlock{Format: "odf", Text: `<text:table-of-content text:name="Table1"><text:index-body><text:p>TOC</text:p></text:index-body></text:table-of-content>`}).
+			P(richdoc.Txt("see "), richdoc.RawInline{Format: "odf", Text: `<text:reference-mark text:name="mark"></text:reference-mark>`}, richdoc.Txt(" here")).
 			Doc(),
 		"raw-dropped-other-format": richdoc.New().
 			// Raw nodes for a foreign format are dropped, like other converters.
@@ -405,6 +424,15 @@ func normInline(in richdoc.Inline) richdoc.Inline {
 		n.Inlines = normInlines(n.Inlines)
 		return n
 	case richdoc.Link:
+		n.Inlines = normInlines(n.Inlines)
+		return n
+	case richdoc.Footnote:
+		n.Blocks = normBlocks(n.Blocks)
+		return n
+	case richdoc.Anchor:
+		n.Inlines = normInlines(n.Inlines)
+		return n
+	case richdoc.CrossRef:
 		n.Inlines = normInlines(n.Inlines)
 		return n
 	default:

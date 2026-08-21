@@ -15,14 +15,21 @@
 // The two directions are designed as a faithful round-trip:
 // Parse(Write(d)) is semantically equal to d for the supported model.
 //
-// OpenDocument has no dedicated element for several richdoc nodes (code blocks,
-// block quotes, thematic breaks, inline/display math); those are written using
-// standard ODF container elements tagged with attributes in a private
+// Footnotes, bookmarks and cross-references map onto native ODF elements:
+// [richdoc.Footnote] ↔ text:note, [richdoc.Anchor] ↔ text:bookmark, and
+// [richdoc.CrossRef] ↔ text:bookmark-ref (text:reference-ref is also accepted on
+// parse). ODF has no first-class citation element, so a CrossRef of kind
+// [richdoc.RefCite] is written as a bookmark-ref tagged with the private
+// attribute odfgo:cite="true" that Parse restores to RefCite; an ODF endnote is
+// normalized to a Footnote on the round-trip.
+//
+// OpenDocument has no dedicated element for several other richdoc nodes (code
+// blocks, block quotes, thematic breaks, inline/display math); those are written
+// using standard ODF container elements tagged with attributes in a private
 // namespace ("https://github.com/go-odf/odf"), which ODF consumers ignore and
-// which let Parse re-recognize the node. Constructs the model has no node for at
-// all (footnotes, bookmarks, cross-references, and any other unrecognized
-// element) are preserved verbatim through [richdoc.RawInline] / [richdoc.RawBlock]
-// with Format "odf", so nothing in the source is lost.
+// which let Parse re-recognize the node. Any remaining unrecognized element is
+// preserved verbatim through [richdoc.RawInline] / [richdoc.RawBlock] with Format
+// "odf", so nothing in the source is lost.
 //
 // The package is pure Go and builds with CGO disabled, including for
 // GOOS=js/GOARCH=wasm.
@@ -46,6 +53,14 @@ const (
 	nsXLink    = "http://www.w3.org/1999/xlink"
 	nsDC       = "http://purl.org/dc/elements/1.1/"
 	nsODFGo    = "https://github.com/go-odf/odf"
+)
+
+// odfgo private-namespace attribute names carried on standard ODF elements so
+// Parse can recover a model node ODF has no faithful element for.
+const (
+	// attrCite marks a text:bookmark-ref as a [richdoc.CrossRef] of kind
+	// [richdoc.RefCite] (odfgo:cite="true"), since ODF has no citation element.
+	attrCite = "cite"
 )
 
 // Names of the ODF parts inside the ZIP container.
