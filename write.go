@@ -51,7 +51,7 @@ type writer struct {
 	images     []imagePart
 	err        error
 
-	listSeq, sectSeq, tableSeq, frameSeq, imgSeq int
+	listSeq, sectSeq, tableSeq, frameSeq, imgSeq, noteSeq int
 }
 
 type imagePart struct {
@@ -242,6 +242,26 @@ func (w *writer) writeInline(in richdoc.Inline) {
 		w.writeImage(n)
 	case richdoc.Math:
 		w.body.WriteString(`<text:span odfgo:math="inline">` + escText(n.TeX) + `</text:span>`)
+	case richdoc.Footnote:
+		w.noteSeq++
+		seq := strconv.Itoa(w.noteSeq)
+		w.body.WriteString(`<text:note text:id="ftn` + seq + `" text:note-class="footnote"><text:note-citation>` + seq + `</text:note-citation><text:note-body>`)
+		w.writeBlocks(n.Blocks)
+		w.body.WriteString(`</text:note-body></text:note>`)
+	case richdoc.Anchor:
+		// ODF bookmarks are point markers; any Inlines the Anchor labels are
+		// written adjacent to the bookmark so no visible content is lost.
+		w.body.WriteString(`<text:bookmark text:name="` + escAttr(n.ID) + `"/>`)
+		w.writeInlines(n.Inlines)
+	case richdoc.CrossRef:
+		w.body.WriteString(`<text:bookmark-ref text:ref-name="` + escAttr(n.Target) + `"`)
+		if n.Kind == richdoc.RefCite {
+			// ODF has no citation element: tag the ref so Parse restores RefCite.
+			w.body.WriteString(` odfgo:` + attrCite + `="true"`)
+		}
+		w.body.WriteString(`>`)
+		w.writeInlines(n.Inlines)
+		w.body.WriteString(`</text:bookmark-ref>`)
 	case richdoc.LineBreak:
 		w.body.WriteString(`<text:line-break/>`)
 	case richdoc.RawInline:

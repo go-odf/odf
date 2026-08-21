@@ -676,6 +676,22 @@ func (p *parser) parseInlineElement(dec *xml.Decoder, se xml.StartElement, off i
 			return nil, err
 		}
 		return []richdoc.Inline{img}, nil
+	case "note":
+		return p.parseNote(dec, se)
+	case "bookmark", "bookmark-start":
+		if err := dec.Skip(); err != nil {
+			return nil, err
+		}
+		return []richdoc.Inline{richdoc.Anchor{ID: attrLocal(se, "name")}}, nil
+	case "bookmark-end":
+		// The closing half of a bookmark range: the start already yielded the
+		// Anchor, so the end contributes nothing.
+		if err := dec.Skip(); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	case "reference-ref", "bookmark-ref":
+		return p.parseRef(dec, se)
 	default:
 		raw, err := p.captureRaw(dec, off)
 		if err != nil {
@@ -726,6 +742,51 @@ func (p *parser) parseLink(dec *xml.Decoder, se xml.StartElement) ([]richdoc.Inl
 		return nil, err
 	}
 	return []richdoc.Inline{richdoc.Link{URL: href, Title: title, Inlines: inner}}, nil
+}
+
+// parseNote maps a text:note (footnote or endnote) to a [richdoc.Footnote]. The
+// generated text:note-citation marker is dropped and the block children of
+// text:note-body become the note body; an endnote note-class normalizes to a
+// footnote on the round-trip.
+func (p *parser) parseNote(dec *xml.Decoder, se xml.StartElement) ([]richdoc.Inline, error) {
+	var blocks []richdoc.Block
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		switch e := tok.(type) {
+		case xml.StartElement:
+			if e.Name.Local == "note-body" {
+				blocks, err = p.parseBlocks(dec, e.Name)
+				if err != nil {
+					return nil, err
+				}
+			} else if err := dec.Skip(); err != nil { // text:note-citation, etc.
+				return nil, err
+			}
+		case xml.EndElement:
+			if e.Name == se.Name {
+				return []richdoc.Inline{richdoc.Footnote{Blocks: blocks}}, nil
+			}
+		}
+	}
+}
+
+// parseRef maps a text:reference-ref or text:bookmark-ref to a
+// [richdoc.CrossRef]. The ref-name attribute is the target and the element's
+// inline content is the visible text; the private odfgo:cite attribute restores
+// a citation (RefCite) that ODF has no first-class element for.
+func (p *parser) parseRef(dec *xml.Decoder, se xml.StartElement) ([]richdoc.Inline, error) {
+	kind := richdoc.RefLabel
+	if v, ok := attrNS(se, nsODFGo, attrCite); ok && v == "true" {
+		kind = richdoc.RefCite
+	}
+	inner, err := p.parseInlines(dec, se.Name)
+	if err != nil {
+		return nil, err
+	}
+	return []richdoc.Inline{richdoc.CrossRef{Target: attrLocal(se, "ref-name"), Kind: kind, Inlines: inner}}, nil
 }
 
 func (p *parser) parseImage(dec *xml.Decoder, se xml.StartElement) (richdoc.Image, error) {

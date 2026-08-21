@@ -308,6 +308,18 @@ func TestParseMalformedContent(t *testing.T) {
 		head + body + `<text:p><draw:frame><svg:desc>`,
 		// parseImage: default Skip error on a malformed child.
 		head + body + `<text:p><draw:frame><zz>`,
+		// parseInlineElement bookmark Skip error (unterminated bookmark).
+		head + body + `<text:p><text:bookmark>`,
+		// parseInlineElement bookmark-end Skip error.
+		head + body + `<text:p><text:bookmark-end>`,
+		// parseNote: unterminated note (Token error).
+		head + body + `<text:p><text:note>`,
+		// parseNote: note-body parseBlocks error.
+		head + body + `<text:p><text:note><text:note-body>`,
+		// parseNote: note-citation Skip error.
+		head + body + `<text:p><text:note><text:note-citation>`,
+		// parseRef: reference-ref parseInlines error.
+		head + body + `<text:p><text:reference-ref>`,
 	}
 	for i, b := range bodies {
 		src := zipODT(map[string]string{"mimetype": mimetypeODT, partContent: b})
@@ -552,6 +564,98 @@ func TestParsePlainSpanAndUnknownInline(t *testing.T) {
 	}
 	if _, ok := para.Inlines[1].(richdoc.RawInline); !ok {
 		t.Fatalf("want RawInline for unknown element, got %T", para.Inlines[1])
+	}
+}
+
+// TestParseBookmarkVariants covers the range form of bookmarks: a
+// text:bookmark-start yields a point Anchor and a stray text:bookmark-end is
+// consumed without producing a node.
+func TestParseBookmarkVariants(t *testing.T) {
+	body := `<text:p>a<text:bookmark-start text:name="r"/>b<text:bookmark-end text:name="r"/>c</text:p>`
+	d := parseOK(t, "", body)
+	para := d.Blocks[0].(richdoc.Paragraph)
+	// a, Anchor{r}, b, c -> the bookmark-end adds nothing.
+	var anchors int
+	var text string
+	for _, in := range para.Inlines {
+		switch n := in.(type) {
+		case richdoc.Anchor:
+			anchors++
+			if n.ID != "r" {
+				t.Fatalf("anchor id = %q, want r", n.ID)
+			}
+		case richdoc.Text:
+			text += n.Value
+		}
+	}
+	if anchors != 1 {
+		t.Fatalf("want 1 anchor, got %d", anchors)
+	}
+	if text != "abc" {
+		t.Fatalf("visible text = %q, want abc", text)
+	}
+}
+
+// TestParseReferenceRefLabelAndCite covers the reference-ref parse element (the
+// alternate of bookmark-ref) for both a plain label and an odfgo:cite citation.
+func TestParseReferenceRefLabelAndCite(t *testing.T) {
+	body := `<text:p>` +
+		`<text:reference-ref text:ref-name="lbl">L</text:reference-ref>` +
+		`<text:reference-ref text:ref-name="key" odfgo:cite="true">C</text:reference-ref>` +
+		`</text:p>`
+	d := parseOK(t, "", body)
+	para := d.Blocks[0].(richdoc.Paragraph)
+	r0 := para.Inlines[0].(richdoc.CrossRef)
+	if r0.Target != "lbl" || r0.Kind != richdoc.RefLabel {
+		t.Fatalf("ref 0 = %+v, want label lbl", r0)
+	}
+	r1 := para.Inlines[1].(richdoc.CrossRef)
+	if r1.Target != "key" || r1.Kind != richdoc.RefCite {
+		t.Fatalf("ref 1 = %+v, want cite key", r1)
+	}
+}
+
+// TestParseEndnoteNormalizesToFootnote covers the endnote note-class mapping to
+// a Footnote (the note-class attribute is not preserved).
+func TestParseEndnoteNormalizesToFootnote(t *testing.T) {
+	body := `<text:p><text:note text:id="en1" text:note-class="endnote">` +
+		`<text:note-citation>i</text:note-citation>` +
+		`<text:note-body><text:p>end</text:p></text:note-body>` +
+		`</text:note></text:p>`
+	d := parseOK(t, "", body)
+	fn := d.Blocks[0].(richdoc.Paragraph).Inlines[0].(richdoc.Footnote)
+	if got := richdoc.PlainText(&richdoc.Document{Blocks: fn.Blocks}); got != "end" {
+		t.Fatalf("footnote body = %q, want end", got)
+	}
+}
+
+// TestWriteAnchorWithInlines covers writing an Anchor that labels visible
+// content: the bookmark is a point marker and the inlines are written next to
+// it, so no text is lost even though the round-trip detaches them.
+func TestWriteAnchorWithInlines(t *testing.T) {
+	doc := richdoc.New().P(richdoc.Mark("m", richdoc.Txt("visible"))).Doc()
+	out := mustWrite(t, doc)
+	zr, err := zip.NewReader(bytes.NewReader(out), int64(len(out)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var content string
+	for _, f := range zr.File {
+		if f.Name == partContent {
+			data, _ := slurp(f)
+			content = string(data)
+		}
+	}
+	if !strings.Contains(content, `<text:bookmark text:name="m"/>visible`) {
+		t.Fatalf("anchor inlines not written adjacent: %s", content)
+	}
+	// Re-parse: the visible text survives as a sibling Text node.
+	got, err := Parse(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pt := richdoc.PlainText(got); pt != "visible" {
+		t.Fatalf("plain text = %q, want visible", pt)
 	}
 }
 
