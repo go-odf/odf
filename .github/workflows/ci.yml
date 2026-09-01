@@ -17,7 +17,7 @@ jobs:
       CGO_ENABLED: "1"
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.26.4"
       - name: Gofmt
@@ -58,7 +58,7 @@ jobs:
           - js/wasm
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.26.4"
       - name: Build ${{ matrix.target }}
