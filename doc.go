@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 // Package odf converts between ODT (OpenDocument Text) packages and the neutral
-// [github.com/go-richdoc/richdoc] document model.
+// [github.com/go-richdoc/richdoc] document model, and reads ODS
+// (OpenDocument Spreadsheet) packages as well.
 //
 // An ODT file is a ZIP container of XML parts. [Parse] opens the container,
 // reads content.xml (resolving inline formatting against the automatic styles
@@ -14,6 +15,20 @@
 //
 // The two directions are designed as a faithful round-trip:
 // Parse(Write(d)) is semantically equal to d for the supported model.
+//
+// # Spreadsheets
+//
+// A spreadsheet is the same package as a text document, inside an
+// office:spreadsheet body instead of an office:text one, so Parse reads one
+// too: each sheet comes back as a level-1 [richdoc.Heading] carrying its
+// table:name, followed by the sheet's [richdoc.Table]. Write always produces
+// ODT.
+//
+// Only a spreadsheet body honours table:number-columns-repeated and
+// table:number-rows-repeated, and only a spreadsheet body has the padding at
+// the end of each row dropped — an empty cell between two full ones is a gap in
+// the data and stays. A repeat is a count in a FILE, so what it asks for is an
+// allocation the input decides: it is capped at 1024 columns and 65536 rows.
 //
 // Footnotes, bookmarks and cross-references map onto native ODF elements:
 // [richdoc.Footnote] ↔ text:note, [richdoc.Anchor] ↔ text:bookmark, and

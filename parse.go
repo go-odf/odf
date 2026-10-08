@@ -84,6 +84,9 @@ func Parse(src []byte) (*richdoc.Document, error) {
 }
 
 type parser struct {
+	// sheet says the body being walked is a spreadsheet, whose tables carry
+	// a name and whose rows are padded.
+	sheet    bool
 	parts    map[string][]byte // ZIP entry name -> bytes
 	styles   map[string]styleProps
 	lists    map[string]listInfo
@@ -186,7 +189,11 @@ func (p *parser) parseContent() ([]richdoc.Block, error) {
 			if err := p.collectStylesContainer(dec, se); err != nil {
 				return nil, err
 			}
-		case "text":
+		case "text", "spreadsheet":
+			// A spreadsheet body holds the same table elements as running
+			// text. Walking only office:text meant a .ods parsed into a
+			// document of nothing, without an error.
+			p.sheet = se.Name.Local == "spreadsheet"
 			blocks, err = p.parseBlocks(dec, se.Name)
 			if err != nil {
 				return nil, err
@@ -326,7 +333,19 @@ func (p *parser) parseBlock(dec *xml.Decoder, se xml.StartElement, off int64) ([
 	case "list":
 		return p.one(p.parseList(dec, se))
 	case "table":
-		return p.one(p.parseTable(dec, se))
+		name := ""
+		if p.sheet {
+			name = sheetName(se)
+		}
+		t, err := p.parseTable(dec, se)
+		if err != nil {
+			return nil, err
+		}
+		if name == "" {
+			return []richdoc.Block{t}, nil
+		}
+		// Named, so the reader can tell one sheet from the next.
+		return []richdoc.Block{sheetHeading(name), t}, nil
 	case "section":
 		return p.parseSection(dec, se)
 	default:
@@ -490,14 +509,31 @@ func (p *parser) parseTable(dec *xml.Decoder, se xml.StartElement) (richdoc.Bloc
 					}
 				}
 			case "table-row":
+				n := repeatOf(e, "number-rows-repeated")
 				cells, aligns, err := p.parseRow(dec, e.Name)
 				if err != nil {
 					return nil, err
 				}
-				if firstAlign == nil {
+				if p.sheet {
+					// Only a spreadsheet squares its rows off, and only a
+					// spreadsheet repeats them: a text document's table says
+					// what it means once.
+					cells, aligns = trimTrailingEmpty(cells, aligns)
+					if n > maxRepeatRows {
+						n = maxRepeatRows
+					}
+					if len(cells) == 0 {
+						n = 0
+					}
+				} else {
+					n = 1
+				}
+				if firstAlign == nil && len(aligns) > 0 {
 					firstAlign = aligns
 				}
-				rows = append(rows, cells)
+				for i := 0; i < n; i++ {
+					rows = append(rows, cells)
+				}
 			default:
 				if err := dec.Skip(); err != nil {
 					return nil, err
@@ -554,12 +590,20 @@ func (p *parser) parseRow(dec *xml.Decoder, end xml.Name) ([]richdoc.Cell, []ric
 		switch e := tok.(type) {
 		case xml.StartElement:
 			if e.Name.Local == "table-cell" {
+				n := 1
+				if p.sheet {
+					if n = repeatOf(e, "number-columns-repeated"); n > maxRepeatColumns {
+						n = maxRepeatColumns
+					}
+				}
 				cell, a, err := p.parseCell(dec, e.Name)
 				if err != nil {
 					return nil, nil, err
 				}
-				cells = append(cells, cell)
-				aligns = append(aligns, a)
+				for i := 0; i < n; i++ {
+					cells = append(cells, cell)
+					aligns = append(aligns, a)
+				}
 			} else if err := dec.Skip(); err != nil {
 				return nil, nil, err
 			}
