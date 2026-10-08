@@ -1,7 +1,8 @@
 # odf
 
 An **ODT (OpenDocument Text) ⇄ [richdoc](https://github.com/go-richdoc/richdoc)**
-converter, written in pure Go (CGO-free, including `GOOS=js`).
+converter, written in pure Go (CGO-free, including `GOOS=js`). `.ods`
+spreadsheets are **read** as well.
 
 `odf` reads an `.odt` package (a ZIP of XML) into the neutral `richdoc`
 document model, and writes a minimal, valid OpenDocument Text package from a
@@ -13,6 +14,43 @@ out, err := odf.Write(d)   // *richdoc.Document -> .odt bytes (valid ODF package
 ```
 
 `src` and the return of `Write` are the raw bytes of the `.odt` ZIP container.
+`Parse` also accepts an `.ods` spreadsheet; `Write` always produces ODT.
+
+## Spreadsheets (`.ods`)
+
+A spreadsheet is the **same package** as a text document — the same ZIP, the
+same `content.xml`, the same `table:table`/`-row`/`-cell` elements — inside an
+`office:spreadsheet` body instead of an `office:text` one. So `Parse` reads one
+too: each sheet comes back as a level-1 `Heading` carrying its `table:name`,
+followed by the sheet's `Table`.
+
+⛔ The reader used to walk `office:text` and nothing else, and the cost of that
+was **silent**: an `.ods` parsed *without an error* into a document of no
+blocks, so a conversion handed somebody an empty page and no reason for it. An
+empty answer and a refusal are different things, and this was neither — it was
+an empty answer wearing a success. `TestASpreadsheetIsReadAtAll` is that
+regression.
+
+Three things a spreadsheet does that running text does not, and each is handled
+**only** when the body is `office:spreadsheet`:
+
+| | |
+| --- | --- |
+| **sheet names** | a workbook of six sheets is otherwise six tables run together with nothing saying where one ends. The name becomes a level-1 heading — a sheet is a top-level division, and demoting it would nest every sheet under whatever came before. |
+| **repeat attributes** | `table:number-columns-repeated` and `-rows-repeated`. Running text rarely carries them; a spreadsheet is *made* of them. |
+| **trailing padding** | every row is squared off to the sheet width with one repeated empty cell. It is dropped — but only from the **end**: an empty cell *between* two full ones is a gap in the data and the shape of the row depends on it. |
+
+⛔ **A repeat is a count in a file, so materialising what it asks for is an
+allocation the input decides.** Capped at 1024 columns and 65536 rows — the
+formats' own limits rather than round numbers. OpenSSL's own `lifecycles.ods`
+pads its rows to 1024 columns and asks for **1 048 559 repeated empty rows**;
+read uncapped and untrimmed, its six sheets would be six tables of a million
+rows by a thousand columns. Read as written, they are 91 rows and 14 columns.
+
+The caps are tested against **literals**, not against the constants themselves:
+the first draft asserted `n > maxRepeatRows`, so raising the constant raised the
+assertion with it and the mutation passed. The judge must not move with the
+subject.
 
 ## API
 
@@ -38,7 +76,7 @@ and any embedded `Pictures/`.
 Before writing this converter, the maintained Go landscape was checked. No
 maintained library offers a bidirectional ODT reader/writer over a neutral
 model: `sbinet.org/x/odf` is read-only, `knieriem/odf` and `AlexJarrah/go-ods`
-target spreadsheets (ODS), `kpmy/odf` is a one-way generator, and the `cat`
+target spreadsheets (ODS) but expose cell grids rather than a document model, `kpmy/odf` is a one-way generator, and the `cat`
 family only extracts plain text. An ODT is a ZIP of XML that the Go standard
 library (`archive/zip` + `encoding/xml`) handles directly, so an in-org
 converter that maps ODF onto `richdoc` is justified. The package depends only
@@ -50,6 +88,8 @@ Both directions map as follows:
 
 | ODF (`content.xml`) | richdoc |
 | --- | --- |
+| `office:spreadsheet` → `table:table` + `table:name` | `Heading` (level 1) + `Table` |
+| `table:number-columns-repeated` / `-rows-repeated` (sheets only) | that many columns / rows, capped |
 | `text:h` + `text:outline-level` | `Heading` (level 1–6) |
 | `text:p` | `Paragraph` |
 | `text:span` → `fo:font-weight="bold"` | `Strong` |
