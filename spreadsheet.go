@@ -87,8 +87,12 @@ func trimTrailingEmpty(cells []richdoc.Cell, aligns []richdoc.Alignment) ([]rich
 	for n > 0 && emptyCell(cells[n-1]) {
 		n--
 	}
-	if n > len(aligns) {
-		n = len(aligns)
+	// The two slices are built in lockstep, so this cannot differ today. If it
+	// ever does, PAD the alignments rather than truncate the cells: a guard
+	// against a panic that drops data instead is a worse failure than the one
+	// it prevents, and a silent one.
+	for len(aligns) < n {
+		aligns = append(aligns, richdoc.AlignDefault)
 	}
 	return cells[:n], aligns[:n]
 }

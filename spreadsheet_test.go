@@ -6,6 +6,7 @@ package odf
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/xml"
 	"strings"
 	"testing"
 
@@ -286,4 +287,96 @@ func TestASheetNameIsATopLevelHeading(t *testing.T) {
 		}
 	}
 	t.Fatal("no heading at all")
+}
+
+func TestAnUnreadableRepeatCountsOnce(t *testing.T) {
+	// The attribute is a string in a file, so it is whatever the file says. A
+	// cell is still a cell: anything absent, unreadable, zero or negative has
+	// to count ONCE. Counting it zero times would delete data on a typo.
+	for _, v := range []string{"banana", "0", "-3", "", "1e3", "9999999999999999999999"} {
+		se := xml.StartElement{Attr: []xml.Attr{{
+			Name:  xml.Name{Space: "urn:…:table:1.0", Local: "number-columns-repeated"},
+			Value: v,
+		}}}
+		if n := repeatOf(se, "number-columns-repeated"); n != 1 {
+			t.Errorf("a repeat of %q counted %d times", v, n)
+		}
+	}
+	// And absent entirely.
+	if n := repeatOf(xml.StartElement{}, "number-columns-repeated"); n != 1 {
+		t.Errorf("a cell with no repeat attribute counted %d times", n)
+	}
+}
+
+func TestOnlyANamespacedNameIsASheetName(t *testing.T) {
+	// ⛔ A bare name= is not ODF's table:name. Accepting it would let any
+	// attribute spelled "name" — from a foreign namespace a file is free to
+	// carry — become a heading in somebody's document.
+	ns := xml.Name{Space: "urn:oasis:names:tc:opendocument:xmlns:table:1.0", Local: "name"}
+	if got := sheetName(xml.StartElement{Attr: []xml.Attr{{Name: ns, Value: "Budget"}}}); got != "Budget" {
+		t.Errorf("table:name came back as %q", got)
+	}
+	bare := xml.StartElement{Attr: []xml.Attr{{Name: xml.Name{Local: "name"}, Value: "Budget"}}}
+	if got := sheetName(bare); got != "" {
+		t.Errorf("an unnamespaced name= was taken as a sheet name: %q", got)
+	}
+	if got := sheetName(xml.StartElement{}); got != "" {
+		t.Errorf("a table with no name at all came back as %q", got)
+	}
+}
+
+func TestAnUnnamedSheetGetsNoHeading(t *testing.T) {
+	// The heading exists to tell one sheet from the next. A sheet with no name
+	// has nothing to say, and an empty heading would be a blank line with an
+	// outline number in front of it.
+	d, err := Parse(sheetPackage(t, `<table:table><table:table-row>`+cell("a")+`</table:table-row></table:table>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range d.Blocks {
+		if _, ok := b.(richdoc.Heading); ok {
+			t.Error("an unnamed sheet was given a heading")
+		}
+	}
+}
+
+func TestACellHoldingBlocksIsNotEmpty(t *testing.T) {
+	// ⛔ parseCell fills Inlines and never Blocks today, so this guard cannot
+	// fire through the parser — which is exactly why it is here and tested
+	// directly. The day a cell learns to hold a nested table or a list, a
+	// predicate that only looked at Inlines would call it empty and the
+	// trimmer would drop it off the end of its row, silently.
+	full := richdoc.Cell{Blocks: []richdoc.Block{richdoc.Paragraph{}}}
+	if emptyCell(full) {
+		t.Error("a cell holding a block was called empty")
+	}
+	if !emptyCell(richdoc.Cell{}) {
+		t.Error("a cell holding nothing was not called empty")
+	}
+	// A Text inline of "" is the padding; a non-Text inline is content.
+	if !emptyCell(richdoc.Cell{Inlines: []richdoc.Inline{richdoc.Text{}}}) {
+		t.Error("a cell holding one empty run was not called empty")
+	}
+	if emptyCell(richdoc.Cell{Inlines: []richdoc.Inline{richdoc.LineBreak{}}}) {
+		t.Error("a cell holding a line break was called empty")
+	}
+}
+
+func TestTrimmingNeverOutrunsTheAlignments(t *testing.T) {
+	// ⛔ The two slices are built together and are the same length — until one
+	// of them is not. Returning cells[:n] and aligns[:n] with n past the end of
+	// aligns is a panic on a file, which is the input deciding whether the
+	// process lives.
+	cells := []richdoc.Cell{{Inlines: []richdoc.Inline{richdoc.Text{Value: "a"}}}}
+	c, a := trimTrailingEmpty(cells, nil)
+	// ⛔ The cell SURVIVES. The first version clamped the count down to the
+	// alignments it had and returned no cells at all — a guard against a panic
+	// that loses the data instead, silently, which is the worse failure of the
+	// two. Writing this test is what showed it.
+	if len(c) != 1 {
+		t.Errorf("a row with no alignments lost its cell: %d came back", len(c))
+	}
+	if len(a) != 1 || a[0] != richdoc.AlignDefault {
+		t.Errorf("the missing alignment came back as %v", a)
+	}
 }
