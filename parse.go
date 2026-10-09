@@ -36,23 +36,45 @@ func Parse(src []byte) (*richdoc.Document, error) {
 	if err != nil {
 		return nil, err
 	}
+	// ⛔ The entry count decides an allocation, and it is a number the FILE
+	// chooses: a ZIP's central directory costs about forty-six bytes an entry,
+	// so a modest package can ask for millions of map buckets before anything
+	// is read. Refused first, and the map is sized to what is allowed rather
+	// than to what was asked for.
+	if len(zr.File) > maxParts {
+		return nil, errTooLarge{want: uint64(len(zr.File)), limit: maxParts}
+	}
 	p := &parser{
 		parts:    make(map[string][]byte, len(zr.File)),
 		styles:   make(map[string]styleProps),
 		lists:    make(map[string]listInfo),
 		manifest: make(map[string]string),
 	}
+	// total is what the package has come to so far. One entry under the
+	// per-entry ceiling says nothing about a thousand of them.
+	var total uint64
 	for _, f := range zr.File {
-		data, err := slurp(f)
+		left := uint64(maxPartBytes)
+		if room := uint64(maxPackageBytes) - total; room < left {
+			left = room
+		}
+		data, err := slurpWithin(f, left)
 		if err != nil {
 			return nil, err
 		}
+		total += uint64(len(data))
 		p.parts[f.Name] = data
 	}
 
 	content, ok := p.parts[partContent]
 	if !ok {
 		return nil, errNoContent
+	}
+	// Before anything is built from it: see checkDepth. The cost is one cheap
+	// pass that stops at the ceiling, and what it buys is that no later pass
+	// can be made to hold a stack the file chose the height of.
+	if err := checkDepth(content); err != nil {
+		return nil, err
 	}
 	p.content = content
 
@@ -106,16 +128,6 @@ type styleProps struct {
 type listInfo struct {
 	ordered bool
 	start   int
-}
-
-// slurp reads a single ZIP entry in full.
-func slurp(f *zip.File) ([]byte, error) {
-	rc, err := f.Open()
-	if err != nil {
-		return nil, err
-	}
-	defer rc.Close()
-	return io.ReadAll(rc)
 }
 
 // parseManifest records the media type of every package part.

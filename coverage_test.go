@@ -642,7 +642,7 @@ func TestWriteAnchorWithInlines(t *testing.T) {
 	var content string
 	for _, f := range zr.File {
 		if f.Name == partContent {
-			data, _ := slurp(f)
+			data, _ := slurpWithin(f, maxPartBytes)
 			content = string(data)
 		}
 	}
