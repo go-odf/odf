@@ -71,6 +71,55 @@ entry and is **stored uncompressed** (the ODF package requirement), followed by
 `META-INF/manifest.xml`, `content.xml`, `styles.xml`, an optional `meta.xml`,
 and any embedded `Pictures/`.
 
+## What a package may ask for
+
+An ODF package is a **ZIP**, and a ZIP says how big it will be once opened.
+What it says is a number in a **file**.
+
+⛔ Measured before these limits existed: an `.ods` of **67 206 bytes** whose
+`content.xml` inflates to 64 MiB parsed *without complaint* and held **222.9
+MiB** — a thousandfold on disk, and better than three times the inflated size
+in the heap, because the bytes are read, decoded as UTF-8, then kept as runs.
+Nothing in the package has to be plausible for that to work; deflate simply
+likes repetition.
+
+| | | |
+| --- | --- | --- |
+| any one entry, opened | 64 MiB | refused from its **declared** size, before a byte is inflated |
+| the whole package | 192 MiB | one entry under the ceiling says nothing about a thousand of them |
+| entries | 8 192 | it decides an allocation made *before anything is read* |
+| nesting | 256 | the bytes are small and it is the **shape** that costs |
+
+For scale: the `content.xml` of OpenSSL's own six-sheet `lifecycles.ods` — a
+workbook that pads every row to 1024 columns and asks for a million rows — is
+**96 453 bytes**. These leave it six hundred times its size.
+
+### Where a guard goes is not where the code recurses
+
+⛔ The nesting bound was first written where *this package* recurses, in
+`parseBlock`. It caught **nothing**: a table inside a table cell never reaches
+`parseBlock`, because `parseCell` hands anything that is not a paragraph to the
+decoder's `Skip`, which walks it without this package seeing an element. The
+memory was never in our document tree — it was in `encoding/xml`'s own stack of
+open elements. A guard placed where the recursion is, rather than where the
+**cost** is, passes its own test and stops nothing.
+
+### Two guards were removed rather than kept
+
+A check on the bytes actually read looks obviously necessary beside a check on
+the declared size. It is not: `archive/zip` makes the declaration binding, and
+refuses during the read. ⛔ An unreachable guard is not defence in depth; it is
+a claim nobody has tested. What is left is a **dependency**, and
+`TestAnEntryThatHoldsMoreThanItDeclaresIsRefused` pins it, so a future Go that
+stopped bounding the read turns that test red rather than quietly removing this
+package's ceiling.
+
+### What is not a risk here
+
+`encoding/xml` expands no custom entities and fetches no external ones, so
+*billion laughs* and an `<!ENTITY x SYSTEM "file:///etc/passwd">` are both
+refused by the decoder itself — measured, in both directions, not assumed.
+
 ## Reference-library note
 
 Before writing this converter, the maintained Go landscape was checked. No

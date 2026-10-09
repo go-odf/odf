@@ -257,7 +257,7 @@ func TestPackageValidity(t *testing.T) {
 		if f.Name == "mimetype" || f.Name == "Pictures/img1.png" {
 			continue
 		}
-		data, _ := slurp(f)
+		data, _ := slurpWithin(f, maxPartBytes)
 		if err := wellFormed(data); err != nil {
 			t.Fatalf("%s is not well-formed XML: %v", f.Name, err)
 		}
