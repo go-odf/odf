@@ -3,7 +3,8 @@
 
 // Package odf converts between ODT (OpenDocument Text) packages and the neutral
 // [github.com/go-richdoc/richdoc] document model, and reads ODS
-// (OpenDocument Spreadsheet) packages as well.
+// (OpenDocument Spreadsheet), ODP (OpenDocument Presentation) and ODG
+// (OpenDocument Graphics) packages as well.
 //
 // An ODT file is a ZIP container of XML parts. [Parse] opens the container,
 // reads content.xml (resolving inline formatting against the automatic styles
@@ -15,6 +16,23 @@
 //
 // The two directions are designed as a faithful round-trip:
 // Parse(Write(d)) is semantically equal to d for the supported model.
+//
+// # Presentations and drawings
+//
+// office:presentation and office:drawing are the same document: draw:page
+// elements holding shapes, with the words inside them. Each page becomes a
+// heading of its own draw:name followed by the blocks found in its shapes, so
+// a reader can tell which slide a sentence was on.
+//
+// The rules were read off files LibreOffice wrote, and four of them contradict
+// what the specification alone suggests. The title is not the frame with
+// presentation:class="title" — Impress strips that attribute from any frame it
+// does not treat as a master-page placeholder, so a converted deck has none.
+// Speaker notes are skipped: presentation:notes holds a frame whose text reads
+// exactly like body text. A picture is emitted only if its shape held nothing
+// else, because Impress writes a draw:image preview of a table into the same
+// frame as the table. And svg:title and svg:desc are the frame's own children,
+// beside draw:image rather than inside it.
 //
 // # Spreadsheets
 //
