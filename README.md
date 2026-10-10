@@ -2,7 +2,7 @@
 
 An **ODT (OpenDocument Text) ⇄ [richdoc](https://github.com/go-richdoc/richdoc)**
 converter, written in pure Go (CGO-free, including `GOOS=js`). `.ods`
-spreadsheets are **read** as well.
+spreadsheets, `.odp` presentations and `.odg` drawings are **read** as well.
 
 `odf` reads an `.odt` package (a ZIP of XML) into the neutral `richdoc`
 document model, and writes a minimal, valid OpenDocument Text package from a
@@ -14,7 +14,49 @@ out, err := odf.Write(d)   // *richdoc.Document -> .odt bytes (valid ODF package
 ```
 
 `src` and the return of `Write` are the raw bytes of the `.odt` ZIP container.
-`Parse` also accepts an `.ods` spreadsheet; `Write` always produces ODT.
+`Parse` also accepts an `.ods` spreadsheet, an `.odp` presentation and an
+`.odg` drawing; `Write` always produces ODT.
+
+## Presentations and drawings (`.odp`, `.odg`)
+
+`office:presentation` and `office:drawing` are the **same document**:
+`draw:page` elements holding **shapes**, with the words inside them. Walking
+`office:text` found nothing in either — the same silence an `.ods` gave before
+`office:spreadsheet` was handled.
+
+Each page becomes a **heading of its own name** followed by the blocks found in
+its shapes, so a reader can tell which slide a sentence was on.
+
+### ⛔ Every rule here was read off a file LibreOffice WROTE
+
+Four of them contradict what the specification alone suggests, and the fixtures
+in `testdata/` are files Impress and Draw produced rather than fixtures written
+here. A fixture composed by hand tests one's reading of the specification; these
+test the thing a caller will actually be handed.
+
+| | |
+| --- | --- |
+| the title is **not** `presentation:class="title"` | the one rule the specification suggests is the one that does not work. Impress **strips** that attribute from every frame it does not treat as a master-page placeholder, so a converted deck has no classed title frame at all. The heading is the page's own `draw:name`, which survives a conversion and is always there — dull on an untitled slide, and always right. |
+| `presentation:notes` is **skipped** | it holds a frame whose text reads exactly like body text. Walking into it puts words the audience never saw into the document as though they had been on screen. |
+| a picture is **held back** | Impress writes a `draw:image` *preview* of a table into the same frame as the table — `Pictures/TablePreview1.svm`. It is emitted only if the shape held nothing else, so a real picture frame keeps its picture and a table does not gain a broken reference, in a format nothing reads, beside the content it is a picture of. |
+| `svg:title` and `svg:desc` are the **frame's** children | beside `draw:image`, not inside it. A reader looking within the image element finds none, and a slide's picture reaches the document with no alternative text — which no page, byte or block count can see. |
+
+### The shape types are deliberately not enumerated
+
+ODF has dozens — `draw:frame`, `draw:custom-shape`, `draw:rect`,
+`draw:ellipse`, `draw:polygon`, `draw:connector`, `draw:caption`, `draw:g` —
+and any of them may carry text. A list of the ones that came to mind would
+silently drop the words in the others, so the walk **descends** and collects
+what it meets. The shape's own geometry falls out for free:
+`draw:enhanced-geometry` holds no `text:p`.
+
+### A witness, not a restatement
+
+`TestNoFrameOnARealDeckIsClassedTitle` opens the real `.odp` and asserts the
+attribute is absent — and, positively, that the `draw:name`s the heading rule
+relies on are present. ⛔ Without it the specification's rule could be put back
+by somebody reading the standard, and **every other test would still pass**:
+they assert the words came out, and under `draw:name` they do.
 
 ## Spreadsheets (`.ods`)
 
@@ -89,6 +131,7 @@ likes repetition.
 | the whole package | 192 MiB | one entry under the ceiling says nothing about a thousand of them |
 | entries | 8 192 | it decides an allocation made *before anything is read* |
 | nesting | 256 | the bytes are small and it is the **shape** that costs |
+| pages | 65 536 | a page costs a heading and a walk, so the ceiling is generous; it is there so that a file *claiming* four million pages is refused rather than walked |
 
 For scale: the `content.xml` of OpenSSL's own six-sheet `lifecycles.ods` — a
 workbook that pads every row to 1024 columns and asks for a million rows — is
