@@ -154,3 +154,13 @@ func checkDepth(data []byte) error {
 		}
 	}
 }
+
+// errTooManyPages is returned when a drawing or presentation claims more pages
+// than [maxPages]. It says how many were allowed, not how many there were:
+// the count is not known — the walk stops at the ceiling rather than reading
+// to the end of a file that may not have one.
+type errTooManyPages struct{ limit int }
+
+func (e errTooManyPages) Error() string {
+	return fmt.Sprintf("the document holds more than %d pages", e.limit)
+}

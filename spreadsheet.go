@@ -52,17 +52,6 @@ func repeatOf(se xml.StartElement, local string) int {
 	return 1
 }
 
-// sheetName is the table:name a sheet carries, or "" for a table in running
-// text, which has none.
-func sheetName(se xml.StartElement) string {
-	for _, a := range se.Attr {
-		if a.Name.Local == "name" && a.Name.Space != "" {
-			return a.Value
-		}
-	}
-	return ""
-}
-
 // emptyCell says whether a cell holds nothing at all. The padding at the end
 // of every spreadsheet row is made of these, and keeping them would give a
 // two-column sheet a thousand empty columns.
@@ -95,18 +84,4 @@ func trimTrailingEmpty(cells []richdoc.Cell, aligns []richdoc.Alignment) ([]rich
 		aligns = append(aligns, richdoc.AlignDefault)
 	}
 	return cells[:n], aligns[:n]
-}
-
-// sheetHeading is the name of a sheet, as a heading above its table.
-//
-// ⛔ A VALUE, not a pointer. richdoc's blocks are a closed interface set whose
-// marker method has a value receiver, so *Heading satisfies Block too — it
-// compiles, it type-switches, and it matches no case any consumer wrote. The
-// first draft returned one: the headings reached the document, the block count
-// was right, and they came out of the PDF chain as nothing at all.
-func sheetHeading(name string) richdoc.Block {
-	return richdoc.Heading{
-		Level:   1,
-		Inlines: []richdoc.Inline{richdoc.Text{Value: name}},
-	}
 }

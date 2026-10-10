@@ -201,6 +201,14 @@ func (p *parser) parseContent() ([]richdoc.Block, error) {
 			if err := p.collectStylesContainer(dec, se); err != nil {
 				return nil, err
 			}
+		case "presentation", "drawing":
+			// A page holds SHAPES, and the words are inside them. Walking
+			// office:text found nothing here either — the same silence a
+			// spreadsheet gave before office:spreadsheet was added below.
+			blocks, err = p.parsePages(dec, se.Name)
+			if err != nil {
+				return nil, err
+			}
 		case "text", "spreadsheet":
 			// A spreadsheet body holds the same table elements as running
 			// text. Walking only office:text meant a .ods parsed into a
@@ -347,7 +355,7 @@ func (p *parser) parseBlock(dec *xml.Decoder, se xml.StartElement, off int64) ([
 	case "table":
 		name := ""
 		if p.sheet {
-			name = sheetName(se)
+			name = elemName(se)
 		}
 		t, err := p.parseTable(dec, se)
 		if err != nil {
@@ -357,7 +365,7 @@ func (p *parser) parseBlock(dec *xml.Decoder, se xml.StartElement, off int64) ([
 			return []richdoc.Block{t}, nil
 		}
 		// Named, so the reader can tell one sheet from the next.
-		return []richdoc.Block{sheetHeading(name), t}, nil
+		return []richdoc.Block{nameHeading(name), t}, nil
 	case "section":
 		return p.parseSection(dec, se)
 	default:

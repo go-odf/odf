@@ -17,14 +17,21 @@ import (
 func sheetPackage(t *testing.T, body string) []byte {
 	t.Helper()
 	const mime = "application/vnd.oasis.opendocument.spreadsheet"
-	content := `<?xml version="1.0" encoding="UTF-8"?>
+	return pack(t, mime, `<?xml version="1.0" encoding="UTF-8"?>
 <office:document-content
  xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
  xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
  xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
- office:version="1.3"><office:body><office:spreadsheet>` + body +
-		`</office:spreadsheet></office:body></office:document-content>`
+ office:version="1.3"><office:body><office:spreadsheet>`+body+
+		`</office:spreadsheet></office:body></office:document-content>`)
+}
 
+// pack is the ODF package every one of these fixtures needs: a stored mimetype
+// first, the content, and a manifest. It is shared because the three callers
+// had written it out three times and a change to the container shape would
+// have had to be made in all three.
+func pack(t *testing.T, mime, content string) []byte {
+	t.Helper()
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	fw, err := zw.CreateHeader(&zip.FileHeader{Name: "mimetype", Method: zip.Store})
@@ -313,14 +320,14 @@ func TestOnlyANamespacedNameIsASheetName(t *testing.T) {
 	// attribute spelled "name" — from a foreign namespace a file is free to
 	// carry — become a heading in somebody's document.
 	ns := xml.Name{Space: "urn:oasis:names:tc:opendocument:xmlns:table:1.0", Local: "name"}
-	if got := sheetName(xml.StartElement{Attr: []xml.Attr{{Name: ns, Value: "Budget"}}}); got != "Budget" {
+	if got := elemName(xml.StartElement{Attr: []xml.Attr{{Name: ns, Value: "Budget"}}}); got != "Budget" {
 		t.Errorf("table:name came back as %q", got)
 	}
 	bare := xml.StartElement{Attr: []xml.Attr{{Name: xml.Name{Local: "name"}, Value: "Budget"}}}
-	if got := sheetName(bare); got != "" {
+	if got := elemName(bare); got != "" {
 		t.Errorf("an unnamespaced name= was taken as a sheet name: %q", got)
 	}
-	if got := sheetName(xml.StartElement{}); got != "" {
+	if got := elemName(xml.StartElement{}); got != "" {
 		t.Errorf("a table with no name at all came back as %q", got)
 	}
 }
