@@ -49,7 +49,7 @@ func odtWith(styles, body string) []byte {
 	return zipODT(map[string]string{
 		"mimetype":   mimetypeODT,
 		partContent:  contentDoc(styles, body),
-		partManifest: buildManifest(false, nil),
+		partManifest: buildManifest(mimetypeODT, false, nil),
 	})
 }
 

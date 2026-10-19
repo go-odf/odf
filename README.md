@@ -2,7 +2,9 @@
 
 An **ODT (OpenDocument Text) ⇄ [richdoc](https://github.com/go-richdoc/richdoc)**
 converter, written in pure Go (CGO-free, including `GOOS=js`). `.ods`
-spreadsheets, `.odp` presentations and `.odg` drawings are **read** as well.
+spreadsheets, `.odp` presentations and `.odg` drawings are **read** as well,
+and a deck of rendered slides is **written** as an `.odp` with its speaker
+notes.
 
 `odf` reads an `.odt` package (a ZIP of XML) into the neutral `richdoc`
 document model, and writes a minimal, valid OpenDocument Text package from a
@@ -16,6 +18,52 @@ out, err := odf.Write(d)   // *richdoc.Document -> .odt bytes (valid ODF package
 `src` and the return of `Write` are the raw bytes of the `.odt` ZIP container.
 `Parse` also accepts an `.ods` spreadsheet, an `.odp` presentation and an
 `.odg` drawing; `Write` always produces ODT.
+
+## Writing a presentation (`.odp`)
+
+```go
+odp, err := odf.WritePresentation(odf.Presentation{
+	Width: 1280, Height: 720, // CSS pixels; written as 960pt × 540pt
+	Title: "Deck", Author: "Ada", Subject: "…", Keywords: "a, b",
+	Slides: []odf.PresentationSlide{
+		{Image: png1, ImageType: "png", Notes: "what to say", Name: "Opening"},
+	},
+})
+```
+
+The same shape as `ooxml.WritePresentation` in go-ooxml, for the same
+consumer — a renderer whose output **is** the slide, as `marp-cli --pptx`
+writes it. Each slide is a `draw:page` holding one full-page `draw:frame` and
+`draw:image` from `Pictures/`; its `Name` is the page's `draw:name` (what
+`Parse` reads back as the slide's heading) and the picture's `svg:desc`; its
+`Notes` are a `presentation:notes` with a thumbnail of the page and one
+`text:p` a line — written only for a slide that has notes.
+
+- **The size is in CSS pixels**, the unit the slides were rendered in, and is
+  written in **points**: three quarters of a pixel is a point, so a whole
+  number of pixels is exact to two decimals where centimetres would round.
+- **The output is deterministic.** No clock is read: `Created` is written to
+  `meta:creation-date` and `dc:date` only when given.
+- **The bounds are the reader's**: 96 – 5376 px a side (PowerPoint's 1 – 56
+  inches, so the deck converts), 1000 slides, 64 MiB a picture and 160 MiB of
+  pictures, 1 MiB a text — so what this writes, `Parse` reads. A picture whose
+  signature is not its `ImageType` is refused.
+
+Measured 2026-10-19 with LibreOffice: a three-slide deck converts to a
+three-page PDF, each page the picture edge to edge, and to a `.pptx` whose
+notes slides carry the notes.
+
+### ⛔⛔ No `.odt` this library ever wrote opened in LibreOffice
+
+Found while checking the writer above. `archive/zip`'s `CreateHeader` writes a
+**stored** entry with zero sizes in its local header, flag bit 3, and the real
+values in a data descriptor after the data. That is legal ZIP, and our own
+reader — `archive/zip` again — reads it without a murmur. LibreOffice refuses
+it for the `mimetype` entry with nothing more than *"source file could not be
+loaded"*. Changing that one entry, and nothing else, made the same `.odt` open.
+Both writers now write stored entries with `CreateRaw` and the sizes and CRC
+computed first; `TestWriteMimetypeHasNoDataDescriptor` reads the header bytes
+in CI, and the LibreOffice tests open both kinds of file where it is installed.
 
 ## Presentations and drawings (`.odp`, `.odg`)
 
@@ -99,6 +147,7 @@ subject.
 ```go
 func Parse(src []byte) (*richdoc.Document, error)
 func Write(d *richdoc.Document) ([]byte, error)
+func WritePresentation(p Presentation) ([]byte, error)
 ```
 
 `Parse` opens the ZIP, reads `content.xml` (resolving span formatting against
