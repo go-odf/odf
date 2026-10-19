@@ -53,6 +53,28 @@ Measured 2026-10-19 with LibreOffice: a three-slide deck converts to a
 three-page PDF, each page the picture edge to edge, and to a `.pptx` whose
 notes slides carry the notes.
 
+### Editable slides
+
+A slide can hold `Shapes` (back to front) and a `Background` instead of, or
+over, its picture — what an editable deck is made of:
+
+| `Shape.Kind` | element (ODF 1.3 Part 3) |
+|---|---|
+| `ShapeRect` | `draw:rect`, `draw:corner-radius` from `Radius` |
+| `ShapeEllipse` | `draw:ellipse` |
+| `ShapePath` | `draw:path` (§10.3.7): `svg:d` of lines and cubics in a viewBox of hundredths of a pixel; several outlines whose overlaps are holes, `svg:fill-rule="evenodd"` (§20.406) |
+| `ShapeText` | `draw:frame` + `draw:text-box` (§10.4.2–10.4.3): one `text:p` of `text:span`s — family, size, bold, italic, colour, `fo:letter-spacing`, a `text:a` for http, https and mailto links only — with no padding and no wrap |
+| `ShapeImage` | `draw:frame` + `draw:image` of `Presentation.Images[Image-1]`, stored once however many slides show it |
+
+Fills are a solid colour with `draw:opacity`. `Presentation.Fonts` are
+embedded under `Fonts/`, deflated, each face a `style:font-face` whose
+`svg:font-face-src`/`svg:font-face-uri` (§16.23–16.26) points at its file —
+measured 2026-10-19: LibreOffice 25.8 renders a deck set in Lato, on a
+machine without Lato, in Lato. Every text is XML-escaped and stripped of the
+characters XML cannot carry; `FuzzEditableText` checks content.xml stays
+well-formed. Bounds: 20 000 shapes a slide, 64 fonts ≤ 32 MiB, coordinates
+under 2³⁰ px, sizes 1–4000 pt.
+
 ### ⛔⛔ No `.odt` this library ever wrote opened in LibreOffice
 
 Found while checking the writer above. `archive/zip`'s `CreateHeader` writes a

@@ -63,15 +63,31 @@ type Presentation struct {
 	// writes neither, which is what makes the output the same bytes for the
 	// same input.
 	Created time.Time
+
+	// Images are the pictures editable slides' shapes show (Shape.Image),
+	// each stored once however many slides show it.
+	Images []Image
+
+	// Fonts are typefaces embedded in the package for viewers that do not
+	// have them.
+	Fonts []Font
 }
 
-// A PresentationSlide is one slide: a picture that covers it, and its notes.
+// A PresentationSlide is one slide: a picture that covers it, or editable
+// shapes, or both (the picture at the back), and its notes.
 type PresentationSlide struct {
 	// Image is the picture, stretched over the whole slide; render it at the
 	// slide's aspect ratio. ImageType is "png" or "jpeg", and is checked
-	// against the image's own signature.
+	// against the image's own signature. It may be left out when the slide
+	// has Shapes or a Background.
 	Image     []byte
 	ImageType string
+
+	// Background is the page's fill; nil leaves it unfilled.
+	Background *RGBA
+
+	// Shapes are the slide's editable content, back to front.
+	Shapes []Shape
 
 	// Notes are the speaker notes, one paragraph per line. Empty writes no
 	// presentation:notes.
@@ -88,10 +104,10 @@ type PresentationSlide struct {
 // (.odp): mimetype first and STORED, the manifest, content.xml, styles.xml,
 // meta.xml when there are properties, and the pictures under Pictures/.
 //
-// ⛔ A slide is a PICTURE, as in marp-cli's --pptx: the rendering is the
-// deck, and a slide rebuilt from text boxes would be a different slide in
-// every viewer's fonts. So [Parse] reads back each slide's name and picture,
-// and none of its words — they are in the picture.
+// A slide is a picture (as in marp-cli's --pptx), editable shapes (Shapes:
+// rectangles, ellipses, paths, text boxes and pictures, in fonts the package
+// can embed), or both. [Parse] reads back each slide's name, pictures and the
+// text boxes' words.
 //
 // ⛔ The output is deterministic: the same Presentation gives the same bytes.
 // No clock is read (see [Presentation.Created]) and every name is a position.
@@ -101,24 +117,42 @@ func WritePresentation(p Presentation) ([]byte, error) {
 	}
 	w, h := pt(p.Width), pt(p.Height)
 	tw, th := notesThumb(p)
-	images := make([]imagePart, 0, len(p.Slides))
+	images := make([]imagePart, 0, len(p.Slides)+len(p.Images))
+	for i, img := range p.Images {
+		path, media := sharedImagePath(i+1, img)
+		images = append(images, imagePart{path: path, mediaType: media, data: img.Data})
+	}
+	fonts := fontParts(p)
+	for _, f := range fonts {
+		images = append(images, imagePart{path: f.path, mediaType: "application/x-font-ttf", data: f.data})
+	}
+	ss := newShapeStyles()
+	var pageStyles strings.Builder
 	var body strings.Builder
 	for i, s := range p.Slides {
 		num := strconv.Itoa(i + 1)
-		ext, media := "png", "image/png"
-		if s.ImageType == "jpeg" {
-			ext, media = "jpg", "image/jpeg"
-		}
-		path := dirPictures + "slide" + num + "." + ext
-		images = append(images, imagePart{path: path, mediaType: media, data: s.Image})
 		name := s.Name
 		if name == "" {
 			name = "Slide " + num
 		}
-		body.WriteString(`<draw:page draw:name="` + escAttr(name) + `" draw:style-name="dp1" draw:master-page-name="Default">`)
-		body.WriteString(`<draw:frame draw:name="Picture ` + num + `" draw:style-name="gr1" draw:layer="layout" svg:width="` + w + `" svg:height="` + h + `" svg:x="0pt" svg:y="0pt">`)
-		body.WriteString(`<draw:image xlink:href="` + path + `" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad" draw:mime-type="` + media + `"/>`)
-		body.WriteString(`<svg:desc>` + escText(name) + `</svg:desc></draw:frame>`)
+		pageStyle := "dp1"
+		if s.Background != nil && s.Background.A > 0 {
+			pageStyle = "dpb" + num
+			pageStyles.WriteString(`<style:style style:name="` + pageStyle + `" style:family="drawing-page"><style:drawing-page-properties presentation:display-footer="false" presentation:display-page-number="false" presentation:display-date-time="false" presentation:background-visible="true"` + fillProps(*s.Background) + `/></style:style>`)
+		}
+		body.WriteString(`<draw:page draw:name="` + escAttr(name) + `" draw:style-name="` + pageStyle + `" draw:master-page-name="Default">`)
+		if s.Image != nil {
+			ext, media := "png", "image/png"
+			if s.ImageType == "jpeg" {
+				ext, media = "jpg", "image/jpeg"
+			}
+			path := dirPictures + "slide" + num + "." + ext
+			images = append(images, imagePart{path: path, mediaType: media, data: s.Image})
+			body.WriteString(`<draw:frame draw:name="Picture ` + num + `" draw:style-name="gr1" draw:layer="layout" svg:width="` + w + `" svg:height="` + h + `" svg:x="0pt" svg:y="0pt">`)
+			body.WriteString(`<draw:image xlink:href="` + path + `" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad" draw:mime-type="` + media + `"/>`)
+			body.WriteString(`<svg:desc>` + escText(name) + `</svg:desc></draw:frame>`)
+		}
+		writeShapes(&body, s.Shapes, ss, func(i int) (string, string) { return sharedImagePath(i, p.Images[i-1]) })
 		if s.Notes != "" {
 			body.WriteString(`<presentation:notes draw:style-name="dp2">`)
 			body.WriteString(`<draw:page-thumbnail draw:layer="layout" svg:width="` + tw + `" svg:height="` + th + `" svg:x="54pt" svg:y="90pt" draw:page-number="` + num + `" presentation:class="page"/>`)
@@ -134,7 +168,19 @@ func WritePresentation(p Presentation) ([]byte, error) {
 		}
 		body.WriteString(`</draw:page>`)
 	}
-	return packODP(presContent(body.String()), presStyles(p), presMeta(p), images), nil
+	decls := ""
+	if len(fonts) > 0 || len(ss.tOrder) > 0 {
+		decls = fontDecls(p, fonts)
+	}
+	return packODP(presContent(decls, pageStyles.String()+ss.xml(), body.String()), presStyles(p), presMeta(p), images), nil
+}
+
+// sharedImagePath is where Presentation.Images[i-1] is stored.
+func sharedImagePath(i int, img Image) (path, media string) {
+	if img.Type == "jpeg" {
+		return dirPictures + "shared" + strconv.Itoa(i) + ".jpg", "image/jpeg"
+	}
+	return dirPictures + "shared" + strconv.Itoa(i) + ".png", "image/png"
 }
 
 // checkPresentation refuses a deck outside the bounds above.
@@ -160,8 +206,10 @@ func checkPresentation(p Presentation) error {
 	}
 	var total int64
 	for i, s := range p.Slides {
-		if err := checkSlideImage(s); err != nil {
-			return fmt.Errorf("odf: slide %d: %w", i+1, err)
+		if s.Image != nil || (len(s.Shapes) == 0 && s.Background == nil) {
+			if err := checkSlideImage(s); err != nil {
+				return fmt.Errorf("odf: slide %d: %w", i+1, err)
+			}
 		}
 		if len(s.Notes) > maxTextBytes || len(s.Name) > maxTextBytes {
 			return fmt.Errorf("odf: slide %d: its notes or name are past the %d bytes allowed", i+1, maxTextBytes)
@@ -171,7 +219,7 @@ func checkPresentation(p Presentation) error {
 			return fmt.Errorf("odf: the pictures come to more than the %d bytes allowed", maxImagesBytes)
 		}
 	}
-	return nil
+	return checkShapes(p)
 }
 
 // checkSlideImage refuses a picture that is not what its type says.
@@ -233,10 +281,11 @@ func notesThumb(p Presentation) (w, h string) {
 // presContent wraps the pages in content.xml. The two automatic styles are the
 // pages' — no header, footer, date or number drawn over the picture — and the
 // picture frame's, with no line and no fill around it.
-func presContent(pages string) string {
+func presContent(fontDecls, styles, pages string) string {
 	return xmlDecl +
 		`<office:document-content ` + odfNamespaces + presNamespace + ` office:version="1.3">` +
-		`<office:automatic-styles>` +
+		fontDecls +
+		`<office:automatic-styles>` + styles +
 		`<style:style style:name="dp1" style:family="drawing-page"><style:drawing-page-properties presentation:display-footer="false" presentation:display-page-number="false" presentation:display-date-time="false"/></style:style>` +
 		`<style:style style:name="dp2" style:family="drawing-page"><style:drawing-page-properties presentation:display-header="false" presentation:display-footer="false" presentation:display-page-number="false" presentation:display-date-time="false"/></style:style>` +
 		`<style:style style:name="gr1" style:family="graphic"><style:graphic-properties draw:stroke="none" draw:fill="none"/></style:style>` +
@@ -307,6 +356,12 @@ func packODP(content, styles, meta string, images []imagePart) []byte {
 		store(partMeta, meta)
 	}
 	for _, img := range images {
+		if strings.HasPrefix(img.path, "Fonts/") {
+			// A font file is not compressed; deflated it is about half.
+			f, _ := zw.Create(img.path)
+			f.Write(img.data)
+			continue
+		}
 		// ⛔ STORED: a PNG or a JPEG is already compressed, and deflating it
 		// again costs time for nothing — the same choice LibreOffice makes.
 		stored(zw, img.path, img.data)
