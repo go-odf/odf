@@ -310,14 +310,13 @@ func (w *writer) pack(content, meta string) []byte {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 
-	fw, _ := zw.CreateHeader(&zip.FileHeader{Name: partMimetype, Method: zip.Store})
-	io.WriteString(fw, mimetypeODT)
+	stored(zw, partMimetype, []byte(mimetypeODT))
 
 	store := func(name, data string) {
 		f, _ := zw.Create(name)
 		io.WriteString(f, data)
 	}
-	store(partManifest, buildManifest(meta != "", w.images))
+	store(partManifest, buildManifest(mimetypeODT, meta != "", w.images))
 	store(partContent, content)
 	store(partStyles, buildStyles())
 	if meta != "" {
@@ -356,11 +355,13 @@ func buildStyles() string {
 		`</office:document-styles>`
 }
 
-func buildManifest(hasMeta bool, images []imagePart) string {
+// buildManifest lists every part. mimetype is the package's own media type,
+// which the root entry repeats (ODF 1.3 part 2 §3.3).
+func buildManifest(mimetype string, hasMeta bool, images []imagePart) string {
 	var b strings.Builder
 	b.WriteString(xmlDecl)
 	b.WriteString(`<manifest:manifest xmlns:manifest="` + nsManifest + `" manifest:version="1.3">`)
-	b.WriteString(`<manifest:file-entry manifest:full-path="/" manifest:version="1.3" manifest:media-type="` + mimetypeODT + `"/>`)
+	b.WriteString(`<manifest:file-entry manifest:full-path="/" manifest:version="1.3" manifest:media-type="` + mimetype + `"/>`)
 	b.WriteString(`<manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>`)
 	b.WriteString(`<manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/>`)
 	if hasMeta {

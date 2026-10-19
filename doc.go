@@ -4,7 +4,9 @@
 // Package odf converts between ODT (OpenDocument Text) packages and the neutral
 // [github.com/go-richdoc/richdoc] document model, and reads ODS
 // (OpenDocument Spreadsheet), ODP (OpenDocument Presentation) and ODG
-// (OpenDocument Graphics) packages as well.
+// (OpenDocument Graphics) packages as well. [WritePresentation] writes a deck
+// of rendered slides as an ODP package, one full-page picture per slide with
+// its speaker notes.
 //
 // An ODT file is a ZIP container of XML parts. [Parse] opens the container,
 // reads content.xml (resolving inline formatting against the automatic styles
