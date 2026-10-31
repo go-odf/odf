@@ -62,9 +62,10 @@ over, its picture — what an editable deck is made of:
 |---|---|
 | `ShapeRect` | `draw:rect`, `draw:corner-radius` from `Radius` |
 | `ShapeEllipse` | `draw:ellipse` |
-| `ShapePath` | `draw:path` (§10.3.7): `svg:d` of lines and cubics in a viewBox of hundredths of a pixel; several outlines whose overlaps are holes, `svg:fill-rule="evenodd"` (§20.406) |
+| `ShapePath` | `draw:path` (§10.3.7): `svg:d` of lines and cubics in a viewBox of hundredths of a pixel; several outlines whose overlaps are holes, `svg:fill-rule="evenodd"` (§20.406), or `NonZero` for `svg:fill-rule="nonzero"` (an SVG path's default rule) |
 | `ShapeText` | `draw:frame` + `draw:text-box` (§10.4.2–10.4.3): one `text:p` of `text:span`s — family, size, bold, italic, colour, `fo:letter-spacing`, a `text:a` for http, https and mailto links only — with no padding and no wrap |
 | `ShapeImage` | `draw:frame` + `draw:image` of `Presentation.Images[Image-1]`, stored once however many slides show it |
+| any, with `Group` set | `draw:g` (§10.3.15) of those shapes, which a viewer selects and moves as one (an SVG drawing, a formula). It has no box of its own, and its members keep page coordinates. Groups nest up to `MaxGroupDepth` (32) levels, and every member counts towards the slide's limit. LibreOffice draws a group's text |
 
 Fills are a solid colour with `draw:opacity`. `Presentation.Fonts` are
 embedded under `Fonts/`, deflated, each face a `style:font-face` whose
@@ -72,7 +73,7 @@ embedded under `Fonts/`, deflated, each face a `style:font-face` whose
 measured 2026-10-19: LibreOffice 25.8 renders a deck set in Lato, on a
 machine without Lato, in Lato. Every text is XML-escaped and stripped of the
 characters XML cannot carry; `FuzzEditableText` checks content.xml stays
-well-formed. Bounds: 20 000 shapes a slide, 64 fonts ≤ 32 MiB, coordinates
+well-formed. Bounds: 20 000 shapes a slide (group members included), 64 fonts ≤ 32 MiB, coordinates
 under 2³⁰ px, sizes 1–4000 pt.
 
 ### ⛔⛔ No `.odt` this library ever wrote opened in LibreOffice
