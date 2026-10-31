@@ -36,9 +36,26 @@ type Shape struct {
 	// Fill is the inside's colour; a zero alpha is no fill.
 	Fill RGBA
 
+	// NonZero fills a ShapePath by the nonzero rule instead of evenodd
+	// (svg:fill-rule, §20.406): what an SVG path filled by its default rule
+	// needs, where subpaths drawn the same way round overlap without a hole.
+	NonZero bool
+
 	// Name is the draw:name; for a picture it is also its svg:desc.
 	Name string
+
+	// Group, when not empty, makes the shape a group (draw:g, §10.3.15) of
+	// these shapes, which a viewer selects and moves as one: an SVG drawing,
+	// a formula. A draw:g has no box of its own: its members are placed in
+	// page coordinates like any shape, and Kind and the rest are ignored. A
+	// group may hold groups, MaxGroupDepth deep; every shape in it counts
+	// towards the slide's limit.
+	Group []Shape
 }
+
+// MaxGroupDepth bounds how deep groups nest: a reader walks the tree
+// recursively.
+const MaxGroupDepth = 32
 
 // ShapeKind is what a Shape is.
 type ShapeKind uint8
@@ -127,11 +144,11 @@ func checkShapes(p Presentation) error {
 		return fmt.Errorf("odf: the pictures come to more than the %d bytes allowed", maxImagesBytes)
 	}
 	for i, s := range p.Slides {
-		if len(s.Shapes) > maxShapesPerSlide {
-			return fmt.Errorf("odf: slide %d: %d shapes is past the %d allowed", i+1, len(s.Shapes), maxShapesPerSlide)
+		if n := countShapes(s.Shapes, 0); n > maxShapesPerSlide {
+			return fmt.Errorf("odf: slide %d: %d shapes is past the %d allowed", i+1, n, maxShapesPerSlide)
 		}
 		for j, sh := range s.Shapes {
-			if err := checkShape(sh, len(p.Images)); err != nil {
+			if err := checkShape(sh, len(p.Images), 0); err != nil {
 				return fmt.Errorf("odf: slide %d shape %d: %w", i+1, j+1, err)
 			}
 		}
@@ -139,14 +156,50 @@ func checkShapes(p Presentation) error {
 	return nil
 }
 
+// countShapes counts the shapes of a tree, groups and their members, and
+// stops counting past the limit (or past MaxGroupDepth, which checkShape
+// refuses): it bounds its own work.
+func countShapes(shapes []Shape, depth int) int {
+	n := len(shapes)
+	if depth >= MaxGroupDepth {
+		return n
+	}
+	for _, sh := range shapes {
+		if n > maxShapesPerSlide {
+			return n
+		}
+		n += countShapes(sh.Group, depth+1)
+	}
+	return n
+}
+
+// eachShape calls f on every shape of the tree, members after their group.
+func eachShape(shapes []Shape, f func(Shape)) {
+	for _, sh := range shapes {
+		f(sh)
+		eachShape(sh.Group, f)
+	}
+}
+
 func finiteIn(v float64) bool { return v > -maxCoordinate && v < maxCoordinate }
 
-func checkShape(sh Shape, images int) error {
+func checkShape(sh Shape, images, depth int) error {
 	if !finiteIn(sh.X) || !finiteIn(sh.Y) || !(sh.W >= 0 && sh.W < maxCoordinate) || !(sh.H >= 0 && sh.H < maxCoordinate) {
 		return fmt.Errorf("its box is out of range")
 	}
 	if len(sh.Name) > maxTextBytes {
 		return fmt.Errorf("its name is past the %d bytes allowed", maxTextBytes)
+	}
+	if len(sh.Group) > 0 {
+		if depth+1 >= MaxGroupDepth {
+			return fmt.Errorf("groups nest past the %d levels allowed", MaxGroupDepth)
+		}
+		for k, c := range sh.Group {
+			if err := checkShape(c, images, depth+1); err != nil {
+				return fmt.Errorf("member %d: %w", k+1, err)
+			}
+		}
+		return nil
 	}
 	switch sh.Kind {
 	case ShapeRect, ShapeEllipse:
@@ -323,10 +376,27 @@ func fillProps(c RGBA) string {
 
 // writeShapes writes a page's shapes. imagePath gives Images[i-1]'s path.
 func writeShapes(b *strings.Builder, shapes []Shape, ss *shapeStyles, imagePath func(int) (path, media string)) {
-	for i, sh := range shapes {
-		num := strconv.Itoa(i + 1)
+	next := 1
+	writeShapeList(b, shapes, &next, ss, imagePath)
+}
+
+// writeShapeList writes shapes in order, numbering the unnamed ones from
+// *next on, the members of a group after the group itself.
+func writeShapeList(b *strings.Builder, shapes []Shape, next *int, ss *shapeStyles, imagePath func(int) (path, media string)) {
+	for _, sh := range shapes {
+		num := strconv.Itoa(*next)
+		*next++
 		box := ` svg:x="` + ptLen(sh.X) + `" svg:y="` + ptLen(sh.Y) + `" svg:width="` + ptLen(sh.W) + `" svg:height="` + ptLen(sh.H) + `"`
 		name := xmlChars(sh.Name)
+		if len(sh.Group) > 0 {
+			if name == "" {
+				name = "Group " + num
+			}
+			b.WriteString(`<draw:g draw:name="` + escAttr(name) + `">`)
+			writeShapeList(b, sh.Group, next, ss, imagePath)
+			b.WriteString(`</draw:g>`)
+			continue
+		}
 		switch sh.Kind {
 		case ShapeImage:
 			if name == "" {
@@ -360,7 +430,11 @@ func writeShapes(b *strings.Builder, shapes []Shape, ss *shapeStyles, imagePath 
 			case ShapeEllipse:
 				b.WriteString(`<draw:ellipse draw:name="` + escAttr(name) + `" draw:style-name="` + ss.graphicStyle(props) + `" draw:layer="layout"` + box + `/>`)
 			case ShapePath:
-				props += ` svg:fill-rule="evenodd"`
+				if sh.NonZero {
+					props += ` svg:fill-rule="nonzero"`
+				} else {
+					props += ` svg:fill-rule="evenodd"`
+				}
 				w, h := math.Max(sh.W, 0.01), math.Max(sh.H, 0.01)
 				// The viewBox is the box in hundredths of a pixel.
 				b.WriteString(`<draw:path draw:name="` + escAttr(name) + `" draw:style-name="` + ss.graphicStyle(props) + `" draw:layer="layout"` + box +
@@ -405,14 +479,14 @@ func fontDecls(p Presentation, faces []fontPart) string {
 	}
 	var names []string
 	for _, s := range p.Slides {
-		for _, sh := range s.Shapes {
+		eachShape(s.Shapes, func(sh Shape) {
 			for _, r := range sh.Text {
 				if r.Font != "" && !declared[r.Font] {
 					declared[r.Font] = true
 					names = append(names, xmlChars(r.Font))
 				}
 			}
-		}
+		})
 	}
 	sort.Strings(names)
 	for _, n := range names {
