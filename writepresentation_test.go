@@ -382,7 +382,7 @@ func TestWritePresentationRefuses(t *testing.T) {
 		{"tall", func(p *Presentation) { p.Height = 5377 }, nil, "height"},
 		{"empty", func(p *Presentation) { p.Slides = nil }, nil, "no slides"},
 		{"many", func(p *Presentation) {}, func() { maxWriteSlides = 2 }, "3 slides"},
-		{"type", func(p *Presentation) { p.Slides[0].ImageType = "gif" }, nil, `"gif"`},
+		{"type", func(p *Presentation) { p.Slides[0].ImageType = "bmp" }, nil, `"bmp"`},
 		{"lying", func(p *Presentation) { p.Slides[1].ImageType = "png" }, nil, "not a png"},
 		{"big", func(p *Presentation) {}, func() { maxImageBytes = 10 }, "slide 1: a picture"},
 		{"all", func(p *Presentation) {}, func() { maxImagesBytes = int64(len(deck(t).Slides[0].Image)) + 1 }, "pictures come to"},

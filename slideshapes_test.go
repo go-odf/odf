@@ -6,6 +6,9 @@ package odf
 import (
 	"archive/zip"
 	"bytes"
+	"image"
+	"image/color"
+	"image/gif"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -350,5 +353,34 @@ func TestLibreOfficeOpensTheEditableDeck(t *testing.T) {
 	}
 	if !strings.Contains(string(txt), "grouped words") {
 		t.Errorf("LibreOffice did not draw the text of a group: %q", txt)
+	}
+}
+
+// An animated GIF is a picture a shape can show: stored once as a .gif with
+// the media type of a GIF, which Impress plays.
+func TestGIFPictures(t *testing.T) {
+	g := gif.GIF{LoopCount: 0}
+	for i := 0; i < 2; i++ {
+		img := image.NewPaletted(image.Rect(0, 0, 4, 4), []color.Color{color.Black, color.White})
+		img.SetColorIndex(i, i, 1)
+		g.Image, g.Delay = append(g.Image, img), append(g.Delay, 10)
+	}
+	var buf bytes.Buffer
+	if err := gif.EncodeAll(&buf, &g); err != nil {
+		t.Fatal(err)
+	}
+	p := editable(t)
+	p.Images = append(p.Images, Image{Data: buf.Bytes(), Type: "gif"})
+	p.Slides[0].Shapes = append(p.Slides[0].Shapes, Shape{Kind: ShapeImage, X: 0, Y: 0, W: 9, H: 9, Image: len(p.Images)})
+	e := unzipDeck(t, writeDeck(t, p))
+	if !bytes.Equal(e.files["Pictures/shared3.gif"], buf.Bytes()) {
+		t.Fatal("the GIF is not stored as a .gif, byte for byte")
+	}
+	if !strings.Contains(string(e.files["META-INF/manifest.xml"]), `Pictures/shared3.gif" manifest:media-type="image/gif"`) {
+		t.Errorf("manifest: %s", e.files["META-INF/manifest.xml"])
+	}
+	p.Images[len(p.Images)-1].Data = []byte("not a gif")
+	if _, err := WritePresentation(p); err == nil {
+		t.Error("a picture that is not a GIF must be refused")
 	}
 }
