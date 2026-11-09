@@ -177,8 +177,11 @@ func WritePresentation(p Presentation) ([]byte, error) {
 
 // sharedImagePath is where Presentation.Images[i-1] is stored.
 func sharedImagePath(i int, img Image) (path, media string) {
-	if img.Type == "jpeg" {
+	switch img.Type {
+	case "jpeg":
 		return dirPictures + "shared" + strconv.Itoa(i) + ".jpg", "image/jpeg"
+	case "gif":
+		return dirPictures + "shared" + strconv.Itoa(i) + ".gif", "image/gif"
 	}
 	return dirPictures + "shared" + strconv.Itoa(i) + ".png", "image/png"
 }
@@ -233,8 +236,10 @@ func checkSlideImage(s PresentationSlide) error {
 		magic = "\x89PNG\r\n\x1a\n"
 	case "jpeg":
 		magic = "\xff\xd8\xff"
+	case "gif":
+		magic = "GIF8" // GIF87a and GIF89a: an animated GIF plays in Impress
 	default:
-		return fmt.Errorf("image type %q is not png or jpeg", s.ImageType)
+		return fmt.Errorf("image type %q is not png, jpeg or gif", s.ImageType)
 	}
 	if len(s.Image) > maxImageBytes {
 		return fmt.Errorf("a picture of %d bytes is past the %d allowed", len(s.Image), maxImageBytes)
